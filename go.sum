@@ -1,0 +1,10 @@
+github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
+github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
+github.com/sashabaranov/go-openai v1.19.2 h1:+dkuCADSnwXV02YVJkdphY8XD9AyHLUWwk6V7LB6EL8=
+github.com/sashabaranov/go-openai v1.19.2/go.mod h1:lj5b/K+zjTSFxVLijLSTDZuP7adOgerWeFyZLUhAKRg=
+github.com/sashabaranov/go-openai v1.19.3-0.20240202124139-bb6ed545306b h1:EFxxG7vFUrIdgKTFUAD9r9ac048/1srYmA87obGS4ck=
+github.com/sashabaranov/go-openai v1.19.3-0.20240202124139-bb6ed545306b/go.mod h1:lj5b/K+zjTSFxVLijLSTDZuP7adOgerWeFyZLUhAKRg=
+github.com/superturkey650/go-qbittorrent v0.0.0-20190708212631-514bc1f1e281 h1:hUsZ02NZpRBU1RqWIfzKPZrmba17U4gTjn9p5wUbM44=
+github.com/superturkey650/go-qbittorrent v0.0.0-20190708212631-514bc1f1e281/go.mod h1:Z574AhXsJeK32AwSYc+dcq0W4sMzHGUcXHNebvWX0wo=
+golang.org/x/net v0.20.0 h1:aCL9BSgETF1k+blQaYUBx9hJ9LOGP3gAVemcZlf1Kpo=
+golang.org/x/net v0.20.0/go.mod h1:z8BVo6PvndSri0LbOE3hAn0apkU+1YvI6E70E9jsnvY=
