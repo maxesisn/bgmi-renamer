@@ -58,7 +58,7 @@ func main() {
 	}
 	defer f.Close()
 	log.SetOutput(f)
-	log.Println("bgmi-renamer started")
+	log.Printf("bgmi-renamer started -> %s\n", torrentPath)
 
 	client := openai.NewClient(openaiToken)
 	torrentName := filepath.Base(torrentPath)
@@ -144,8 +144,8 @@ func main() {
 	RenameFile(qBitBaseURL, SID, torrentHashV1, torrentName, newFileName)
 
 	// remove torrent parent directory if it's empty
-	// sleep 10 seconds to let qbittorrent move the files
-	time.Sleep(10 * time.Second)
+	// sleep 60 seconds to let qbittorrent move the files
+	time.Sleep(60 * time.Second)
 
 	files, err := os.ReadDir(torrentParentDir)
 	if err != nil {
