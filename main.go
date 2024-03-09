@@ -1,16 +1,20 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -25,25 +29,18 @@ type LLMResult struct {
 }
 
 func main() {
+	var qBitBaseURL, qBitUsername, qBitPassword, openaiToken, openaiBaseURL, torrentCategory, torrentPath, torrentHashV1 string
 
-	if len(os.Args) != 8 {
-		log.Fatalf("Usage: bgmi-renamer <qBit base URL> <qBit username> <qBit password> <your openAI token> %%L %%F %%I\n")
-		log.Fatalf("Example: bgmi-renamer http://localhost:8080 admin adminadmin sk-your_openai_token \"%%L\" \"%%F\" \"%%I\"\n")
-		return
-	}
+	flag.StringVar(&qBitBaseURL, "qbit-url", "", "qBittorrent base URL")
+	flag.StringVar(&qBitUsername, "qbit-username", "", "qBittorrent username")
+	flag.StringVar(&qBitPassword, "qbit-password", "", "qBittorrent password")
+	flag.StringVar(&openaiToken, "openai-token", "", "Your OpenAI token")
+	flag.StringVar(&openaiBaseURL, "openai-url", "https://api.openai.com", "OpenAI API base URL")
+	flag.StringVar(&torrentCategory, "category", "BGmi", "Torrent category")
+	flag.StringVar(&torrentPath, "path", "", "Torrent path")
+	flag.StringVar(&torrentHashV1, "hash", "", "Torrent hash (v1)")
 
-	qBitBaseURL := os.Args[1]
-	qBitUsername := os.Args[2]
-	qBitPassword := os.Args[3]
-	openaiToken := os.Args[4]
-	torrentCategory := os.Args[5]
-	torrentPath := os.Args[6]
-	torrentHashV1 := os.Args[7]
-
-	if torrentCategory != "BGmi" {
-		fmt.Println("Only category BGmi is supported")
-		return
-	}
+	flag.Parse()
 
 	ex, err := os.Executable()
 	if err != nil {
@@ -51,16 +48,65 @@ func main() {
 	}
 	exPath := filepath.Dir(ex)
 
+	configFile := filepath.Join(exPath, "bgmi-renamer.conf")
+
+	if _, err := os.Stat(configFile); err == nil {
+		file, err := os.Open(configFile)
+		if err != nil {
+			log.Printf("无法打开配置文件: %v\n", err)
+		} else {
+			defer file.Close()
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.HasPrefix(line, "qbit-url=") && qBitBaseURL == "" {
+					qBitBaseURL = strings.TrimPrefix(line, "qbit-url=")
+				} else if strings.HasPrefix(line, "qbit-username=") && qBitUsername == "" {
+					qBitUsername = strings.TrimPrefix(line, "qbit-username=")
+				} else if strings.HasPrefix(line, "qbit-password=") && qBitPassword == "" {
+					qBitPassword = strings.TrimPrefix(line, "qbit-password=")
+				} else if strings.HasPrefix(line, "openai-token=") && openaiToken == "" {
+					openaiToken = strings.TrimPrefix(line, "openai-token=")
+				} else if strings.HasPrefix(line, "openai-url=") && openaiBaseURL == "https://api.openai.com" {
+					openaiBaseURL = strings.TrimPrefix(line, "openai-url=")
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				log.Printf("读取配置文件出错: %v\n", err)
+			}
+		}
+	}
+
+	if qBitBaseURL == "" || qBitUsername == "" || qBitPassword == "" || openaiToken == "" ||
+		torrentCategory == "" || torrentPath == "" || torrentHashV1 == "" {
+		flag.Usage()
+		log.Fatalf("Missing required arguments\n")
+		return
+	}
+
+	if torrentCategory != "BGmi" {
+		fmt.Println("Only category BGmi is supported")
+		return
+	}
+
 	logFile := filepath.Join(exPath, "bgmi-renamer.log")
 	f, err := os.OpenFile(logFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Println("Logging to", logFile)
 	defer f.Close()
 	log.SetOutput(f)
-	log.Printf("bgmi-renamer started -> %s\n", torrentPath)
+	currentUser, err := user.Current()
+	if err != nil {
+		log.Fatalf("user.Current error: %v\n", err)
+		return
+	}
+	log.Printf("bgmi-renamer started -> %s [user:%s]\n", torrentPath, currentUser.Username)
 
-	client := openai.NewClient(openaiToken)
+	openAIConfig := openai.DefaultConfig(openaiToken)
+	openAIConfig.BaseURL = openaiBaseURL
+	client := openai.NewClientWithConfig(openAIConfig)
 	torrentName := filepath.Base(torrentPath)
 
 	resp, err := client.CreateChatCompletion(
@@ -154,6 +200,20 @@ func main() {
 	}
 	if len(files) == 0 {
 		log.Fatalf("Removing %s\n", torrentParentDir)
+		// get owner of the directory, check if it's the same as the current user
+		dirStat, err := os.Stat(torrentParentDir)
+		if err != nil {
+			log.Fatalf("Stat error: %v\n", err)
+			return
+		}
+		dirOwner, err := user.LookupId(fmt.Sprintf("%d", dirStat.Sys().(*syscall.Stat_t).Uid))
+		if err != nil {
+			log.Fatalf("LookupId error: %v\n", err)
+			return
+		}
+		if dirOwner.Username != currentUser.Username {
+			log.Println("WARNING: Directory owner is not the same as the current user")
+		}
 		err = os.Remove(torrentParentDir)
 		if err != nil {
 			log.Fatalf("Remove error: %v\n", err)
