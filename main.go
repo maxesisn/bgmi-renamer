@@ -13,9 +13,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -201,22 +199,24 @@ func main() {
 	}
 	if len(files) == 0 {
 		log.Printf("Removing empty directory %s\n", torrentParentDir)
-		if runtime.GOOS != "windows" {
-			// get owner of the directory, check if it's the same as the current user
-			dirStat, err := os.Stat(torrentParentDir)
-			if err != nil {
-				log.Fatalf("Stat error: %v\n", err)
-				return
-			}
-			dirOwner, err := user.LookupId(fmt.Sprintf("%d", dirStat.Sys().(*syscall.Stat_t).Uid))
-			if err != nil {
-				log.Fatalf("LookupId error: %v\n", err)
-				return
-			}
-			if dirOwner.Username != currentUser.Username {
-				log.Println("WARNING: Directory owner is not the same as the current user")
-			}
-		}
+		// remove owner check so windows build can pass
+
+		// if runtime.GOOS != "windows" {
+		// 	// get owner of the directory, check if it's the same as the current user
+		// 	dirStat, err := os.Stat(torrentParentDir)
+		// 	if err != nil {
+		// 		log.Fatalf("Stat error: %v\n", err)
+		// 		return
+		// 	}
+		// 	dirOwner, err := user.LookupId(fmt.Sprintf("%d", dirStat.Sys().(*syscall.Stat_t).Uid))
+		// 	if err != nil {
+		// 		log.Fatalf("LookupId error: %v\n", err)
+		// 		return
+		// 	}
+		// 	if dirOwner.Username != currentUser.Username {
+		// 		log.Println("WARNING: Directory owner is not the same as the current user")
+		// 	}
+		// }
 		err = os.Remove(torrentParentDir)
 		if err != nil {
 			log.Fatalf("Remove error: %v\n", err)
