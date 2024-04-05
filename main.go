@@ -111,7 +111,7 @@ func main() {
 	resp, err := client.CreateChatCompletion(
 		context.Background(),
 		openai.ChatCompletionRequest{
-			Model: openai.GPT3Dot5Turbo,
+			Model: openai.GPT3Dot5Turbo0125,
 			Messages: []openai.ChatCompletionMessage{
 				{
 					Role:    openai.ChatMessageRoleSystem,
@@ -158,11 +158,12 @@ func main() {
 	)
 
 	if err != nil {
+
+		log.Printf("ChatCompletion err response: %v\n", resp)
 		log.Fatalf("ChatCompletion error: %v\n", err)
 		return
 	}
 
-	fmt.Println(resp.Choices[0].Message.Content)
 	var result LLMResult
 	err = json.Unmarshal([]byte(resp.Choices[0].Message.Content), &result)
 	if err != nil {
@@ -320,5 +321,4 @@ func RenameFile(base_url string, SID string, hash string, old_path string, new_p
 		log.Fatalf("ReadAll error: %v\n", err)
 		return
 	}
-	fmt.Println(resp)
 }
