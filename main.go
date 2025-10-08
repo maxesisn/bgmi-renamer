@@ -219,7 +219,7 @@ func main() {
 			}
 		}
 		for i := range renamePlans {
-			renamePlans[i].NewPath = path.Join(fmt.Sprintf("Season %d", renamePlans[i].Season), renamePlans[i].NewFileName)
+			renamePlans[i].NewPath = filepath.Join(fmt.Sprintf("Season %d", renamePlans[i].Season), renamePlans[i].NewFileName)
 		}
 	}
 
