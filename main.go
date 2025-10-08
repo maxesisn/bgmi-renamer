@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/user"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -25,6 +26,32 @@ var prompt []byte
 type LLMResult struct {
 	Season  int `json:"season"`
 	Episode int `json:"episode"`
+}
+
+type TorrentFile struct {
+	Name string `json:"name"`
+}
+
+type RenamePlan struct {
+	OldPath     string
+	NewFileName string
+	NewPath     string
+	Season      int
+	Episode     int
+}
+
+var supportedVideoExtensions = map[string]struct{}{
+	".mkv":  {},
+	".mp4":  {},
+	".avi":  {},
+	".mov":  {},
+	".flv":  {},
+	".ts":   {},
+	".m2ts": {},
+	".m4v":  {},
+	".wmv":  {},
+	".mpg":  {},
+	".mpeg": {},
 }
 
 func main() {
@@ -108,86 +135,101 @@ func main() {
 	client := openai.NewClientWithConfig(openAIConfig)
 	torrentName := filepath.Base(torrentPath)
 
-	resp, err := client.CreateChatCompletion(
-		context.Background(),
-		openai.ChatCompletionRequest{
-			Model: openai.GPT3Dot5Turbo0125,
-			Messages: []openai.ChatCompletionMessage{
-				{
-					Role:    openai.ChatMessageRoleSystem,
-					Content: string(prompt),
-				},
-				{
-					Role:    openai.ChatMessageRoleUser,
-					Content: "[XKsub][Mobile Suit Gundam - The Witch from Mercury S2][12][CHT_JAP][1080P][WEBrip][MP4].mp4",
-				},
-				{
-					Role:    openai.ChatMessageRoleAssistant,
-					Content: `{"season": 2, "episode": 12}`,
-				},
-				{
-					Role:    openai.ChatMessageRoleUser,
-					Content: "[ANi] 我內心的糟糕念頭 第二季 - 16 [1080P][Baha][WEB-DL][AAC AVC][CHT].mp4",
-				},
-				{
-					Role:    openai.ChatMessageRoleAssistant,
-					Content: `{"season": 2, "episode": 16}`,
-				},
-				{
-					Role:    openai.ChatMessageRoleUser,
-					Content: "[Haretahoo.sub][Fate_kaleid_liner_3rei!!][11][GB][1080P] V2/[Haretahoo.sub][Fate_kaleid_liner_3rei!!][11][GB][1080P].mp4",
-				},
-				{
-					Role:    openai.ChatMessageRoleAssistant,
-					Content: `{"season": 3, "episode": 11}`,
-				},
-				{
-					Role:    openai.ChatMessageRoleUser,
-					Content: "[夜莺家族][樱桃小丸子第二期(Chibi Maruko-chan II)][1421]小丸子想招来福气！&小丸子想去掉毛球[2024.01.28][GB_JP][1080P][MP4].mp4",
-				},
-				{
-					Role:    openai.ChatMessageRoleAssistant,
-					Content: `{"season": 2, "episode": 1421}`,
-				},
-				{
-					Role:    openai.ChatMessageRoleUser,
-					Content: torrentName,
-				},
-			},
-		},
-	)
-
-	if err != nil {
-
-		log.Printf("ChatCompletion err response: %v\n", resp)
-		log.Fatalf("ChatCompletion error: %v\n", err)
-		return
-	}
-
-	var result LLMResult
-	err = json.Unmarshal([]byte(resp.Choices[0].Message.Content), &result)
-	if err != nil {
-		log.Fatalf("Unmarshal error: %v\n", err)
-		return
-	}
 	torrentParentDir := filepath.Dir(torrentPath)
 	torrentParParentDir := filepath.Dir(torrentParentDir)
 	torrentParParentDirName := filepath.Base(torrentParParentDir)
-	seasonDir := filepath.Join(torrentParParentDir, fmt.Sprintf("Season %d", result.Season))
-	torrentNameExt := filepath.Ext(torrentName)
-
-	newFileName := fmt.Sprintf("%s - S%02dE%02d%s", torrentParParentDirName, result.Season, result.Episode, torrentNameExt)
-
-	log.Printf("Moving %s to %s\n", torrentPath, seasonDir+"/"+newFileName)
-
 	SID := LoginQBittorrent(qBitBaseURL, qBitUsername, qBitPassword)
 	if SID == "" {
 		log.Fatalln("LoginQBittorrent failed")
 		return
 	}
 
-	MoveTorrent(qBitBaseURL, SID, torrentHashV1, seasonDir)
-	RenameFile(qBitBaseURL, SID, torrentHashV1, torrentName, newFileName)
+	torrentFiles, err := ListTorrentFiles(qBitBaseURL, SID, torrentHashV1)
+	if err != nil {
+		log.Fatalf("ListTorrentFiles error: %v\n", err)
+		return
+	}
+
+	if len(torrentFiles) == 0 {
+		log.Printf("No files returned for torrent %s, nothing to rename\n", torrentName)
+		return
+	}
+
+	ctx := context.Background()
+	var renamePlans []RenamePlan
+	for _, tf := range torrentFiles {
+		ext := strings.ToLower(filepath.Ext(tf.Name))
+		if _, ok := supportedVideoExtensions[ext]; !ok {
+			log.Printf("Skipping unsupported file %s\n", tf.Name)
+			continue
+		}
+
+		result, err := QueryEpisode(ctx, client, tf.Name)
+		if err != nil {
+			log.Fatalf("QueryEpisode error for %s: %v\n", tf.Name, err)
+			return
+		}
+		if result.Season <= 0 {
+			result.Season = 1
+		}
+		if result.Episode <= 0 {
+			log.Fatalf("Invalid episode parsed for %s: %+v\n", tf.Name, result)
+			return
+		}
+
+		renamePlans = append(renamePlans, RenamePlan{
+			OldPath:     tf.Name,
+			Season:      result.Season,
+			Episode:     result.Episode,
+			NewFileName: fmt.Sprintf("%s - S%02dE%02d%s", torrentParParentDirName, result.Season, result.Episode, ext),
+		})
+	}
+
+	if len(renamePlans) == 0 {
+		log.Printf("No supported video files found for torrent %s\n", torrentName)
+		return
+	}
+
+	seasonSet := make(map[int]struct{})
+	for _, plan := range renamePlans {
+		seasonSet[plan.Season] = struct{}{}
+	}
+
+	var targetLocation string
+	if len(seasonSet) == 1 {
+		var season int
+		for s := range seasonSet {
+			season = s
+		}
+		targetLocation = filepath.Join(torrentParParentDir, fmt.Sprintf("Season %d", season))
+		if err := os.MkdirAll(targetLocation, os.ModePerm); err != nil {
+			log.Fatalf("Failed to ensure target directory %s: %v\n", targetLocation, err)
+			return
+		}
+		for i := range renamePlans {
+			renamePlans[i].NewPath = renamePlans[i].NewFileName
+		}
+	} else {
+		targetLocation = torrentParParentDir
+		for season := range seasonSet {
+			dir := filepath.Join(targetLocation, fmt.Sprintf("Season %d", season))
+			if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+				log.Fatalf("Failed to ensure season directory %s: %v\n", dir, err)
+				return
+			}
+		}
+		for i := range renamePlans {
+			renamePlans[i].NewPath = path.Join(fmt.Sprintf("Season %d", renamePlans[i].Season), renamePlans[i].NewFileName)
+		}
+	}
+
+	log.Printf("Moving %s to %s\n", torrentPath, targetLocation)
+
+	MoveTorrent(qBitBaseURL, SID, torrentHashV1, targetLocation)
+	for _, plan := range renamePlans {
+		log.Printf("Renaming %s to %s\n", plan.OldPath, plan.NewPath)
+		RenameFile(qBitBaseURL, SID, torrentHashV1, plan.OldPath, plan.NewPath)
+	}
 
 	// remove torrent parent directory if it's empty
 	// sleep 60 seconds to let qbittorrent move the files
@@ -321,4 +363,96 @@ func RenameFile(base_url string, SID string, hash string, old_path string, new_p
 		log.Fatalf("ReadAll error: %v\n", err)
 		return
 	}
+}
+
+func QueryEpisode(ctx context.Context, client *openai.Client, input string) (LLMResult, error) {
+	messages := []openai.ChatCompletionMessage{
+		{
+			Role:    openai.ChatMessageRoleSystem,
+			Content: string(prompt),
+		},
+		{
+			Role:    openai.ChatMessageRoleUser,
+			Content: "[XKsub][Mobile Suit Gundam - The Witch from Mercury S2][12][CHT_JAP][1080P][WEBrip][MP4].mp4",
+		},
+		{
+			Role:    openai.ChatMessageRoleAssistant,
+			Content: `{"season": 2, "episode": 12}`,
+		},
+		{
+			Role:    openai.ChatMessageRoleUser,
+			Content: "[ANi] 我內心的糟糕念頭 第二季 - 16 [1080P][Baha][WEB-DL][AAC AVC][CHT].mp4",
+		},
+		{
+			Role:    openai.ChatMessageRoleAssistant,
+			Content: `{"season": 2, "episode": 16}`,
+		},
+		{
+			Role:    openai.ChatMessageRoleUser,
+			Content: "[Haretahoo.sub][Fate_kaleid_liner_3rei!!][11][GB][1080P] V2/[Haretahoo.sub][Fate_kaleid_liner_3rei!!][11][GB][1080P].mp4",
+		},
+		{
+			Role:    openai.ChatMessageRoleAssistant,
+			Content: `{"season": 3, "episode": 11}`,
+		},
+		{
+			Role:    openai.ChatMessageRoleUser,
+			Content: "[夜莺家族][樱桃小丸子第二期(Chibi Maruko-chan II)][1421]小丸子想招来福气！&小丸子想去掉毛球[2024.01.28][GB_JP][1080P][MP4].mp4",
+		},
+		{
+			Role:    openai.ChatMessageRoleAssistant,
+			Content: `{"season": 2, "episode": 1421}`,
+		},
+		{
+			Role:    openai.ChatMessageRoleUser,
+			Content: input,
+		},
+	}
+
+	resp, err := client.CreateChatCompletion(
+		ctx,
+		openai.ChatCompletionRequest{
+			Model:    openai.GPT3Dot5Turbo0125,
+			Messages: messages,
+		},
+	)
+	if err != nil {
+		return LLMResult{}, err
+	}
+	if len(resp.Choices) == 0 {
+		return LLMResult{}, fmt.Errorf("no completion choices returned")
+	}
+
+	var result LLMResult
+	if err := json.Unmarshal([]byte(resp.Choices[0].Message.Content), &result); err != nil {
+		return LLMResult{}, err
+	}
+	return result, nil
+}
+
+func ListTorrentFiles(base_url string, SID string, hash string) ([]TorrentFile, error) {
+	base_url = strings.TrimSuffix(base_url, "/")
+	fullUrl := fmt.Sprintf("%s/api/v2/torrents/files?hash=%s", base_url, url.QueryEscape(hash))
+	req, err := http.NewRequest("GET", fullUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Cookie", fmt.Sprintf("SID=%s", SID))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var files []TorrentFile
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		return nil, err
+	}
+
+	return files, nil
 }
