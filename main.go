@@ -170,6 +170,7 @@ func main() {
 			return
 		}
 		if result.Season <= 0 {
+			log.Printf("Invalid season parsed for %s: got %d, defaulting to 1\n", tf.Name, result.Season)
 			result.Season = 1
 		}
 		if result.Episode <= 0 {
